@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vitest *)",
+      "Bash([ -f \"$n.mjs\" ])",
+      "Bash(npx tsc *)",
+      "Bash(npm test *)",
+      "Bash(python3 -c ' *)",
+      "Bash(sed -i '' 's|className=\"rounded-full bg-emerald-300 px-4 py-2 text-sm font-medium text-black shadow-\\\\[0_10px_40px_rgba\\(0,0,0,0.55\\)\\\\]\"|className=\"spring-hover rounded-full bg-emerald-300 px-4 py-2 text-sm font-medium text-black shadow-[0_10px_40px_rgba\\(0,0,0,0.45\\)] hover:bg-emerald-200\"|g' /Users/pan/nuro-editor-web/src/components/photo-editor.tsx)",
+      "Bash(sed -i '' 's|className=\"rounded-full bg-emerald-300 px-4 py-2 text-sm font-medium text-black disabled:opacity-35\"|className=\"spring-hover rounded-full bg-emerald-300 px-4 py-2 text-sm font-medium text-black hover:bg-emerald-200 disabled:opacity-35\"|g' /Users/pan/nuro-editor-web/src/components/photo-editor.tsx)",
+      "Bash(node --version)",
+      "Bash(npm run *)",
+      "Bash(curl -s \"http://localhost:3001/\")",
+      "Bash(curl -s \"http://localhost:3001/_next/static/chunks/src_app_globals_0p2ml0n.css\")",
+      "Bash(curl -s \"http://localhost:3001/\" -o /tmp/_page.html)",
+      "Read(//tmp/**)",
+      "Bash(curl -s \"http://localhost:3001$\\(grep -o 'href=\"[^\"]*\\\\.css[^\"]*\"' /tmp/_page.html)"
+    ]
+  }
+}
