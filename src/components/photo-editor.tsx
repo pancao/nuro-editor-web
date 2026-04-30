@@ -370,9 +370,9 @@ export function PhotoEditor() {
         const operation = session.history[session.historyIndex];
         setCurrentSourceRect(
           operation?.sourceRect ??
-            (session.currentImage
-              ? { x: 0, y: 0, width: session.currentImage.width, height: session.currentImage.height }
-              : null),
+          (session.currentImage
+            ? { x: 0, y: 0, width: session.currentImage.width, height: session.currentImage.height }
+            : null),
         );
         setCurrentRotation(operation?.rotation ?? 0);
         if (session.currentImage) {
@@ -413,11 +413,11 @@ export function PhotoEditor() {
   const renderedBox: RenderedImageBox | null =
     workspaceImage && imageFit.width > 0
       ? {
-          width: imageFit.width,
-          height: imageFit.height,
-          naturalWidth: workspaceImage!.width,
-          naturalHeight: workspaceImage!.height,
-        }
+        width: imageFit.width,
+        height: imageFit.height,
+        naturalWidth: workspaceImage!.width,
+        naturalHeight: workspaceImage!.height,
+      }
       : null;
 
   useEffect(() => {
@@ -564,7 +564,9 @@ export function PhotoEditor() {
     if (suggestionCache[key] || loadingSuggestions[key] || !action.requiresSuggestion) return;
     setLoadingSuggestions((previous) => ({ ...previous, [key]: true }));
     try {
-      const compressed = await compressImageForRequest(image);
+      // Suggestions are stylistic — vision models don't need 1280 px to pick
+      // a film stock. 768 px halves vision-token cost vs the default.
+      const compressed = await compressImageForRequest(image, { maxDimension: 768 });
       const response = await postJson<{ suggestions: AISuggestion[] }>("/api/ai/suggestions", {
         image: compressed,
         toolId,
@@ -592,7 +594,8 @@ export function PhotoEditor() {
 
   async function detectScene(image: ImageAsset) {
     try {
-      const compressed = await compressImageForRequest(image);
+      // Scene detection is binary classification — 768 px is more than enough.
+      const compressed = await compressImageForRequest(image, { maxDimension: 768 });
       const response = await postJson<{ hasPeople?: boolean }>("/api/ai/scene", {
         image: compressed,
       });
@@ -618,7 +621,7 @@ export function PhotoEditor() {
       ),
     );
     try {
-      const compressed = await compressImageForRequest(image);
+      const compressed = await compressImageForRequest(image, { maxDimension: 768 });
       const response = await postJson<{ groups: SuggestionGroup[] }>("/api/ai/suggestions/batch", {
         image: compressed,
         targets,
@@ -1082,9 +1085,8 @@ export function PhotoEditor() {
               <img
                 ref={imageRef}
                 alt="Current edit"
-                className={`block h-full w-full select-none rounded-2xl object-cover shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)] ${
-                  isImageProcessing ? "image-processing-pulse" : ""
-                }`}
+                className={`block h-full w-full select-none rounded-2xl object-cover shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)] ${isImageProcessing ? "image-processing-pulse" : ""
+                  }`}
                 draggable={false}
                 src={(workspaceImage ?? currentImage).dataUrl}
                 style={{
@@ -1130,8 +1132,7 @@ export function PhotoEditor() {
         aria-hidden
         className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 md:top-4"
       >
-        <span className="liquid-glass inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200">
-          <span className="size-1.5 rounded-full bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.8)]" />
+        <span className="backdrop-blur-md bg-white/10 inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/50 mt-2.5">
           Alpha
         </span>
       </div>
@@ -1342,11 +1343,10 @@ function CropOverlay({ cropBox, image, onChange, renderedBox, zoom = 1 }: CropOv
       style={{ width: box.width, height: box.height }}
     >
       <div
-        className={`pointer-events-auto absolute bg-emerald-300/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] ${
-          needsAi
-            ? "border-2 border-dashed border-amber-300"
-            : "border-2 border-emerald-300"
-        }`}
+        className={`pointer-events-auto absolute bg-emerald-300/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] ${needsAi
+          ? "border-2 border-dashed border-amber-300"
+          : "border-2 border-emerald-300"
+          }`}
         data-testid="crop-box"
         onPointerDown={(event) => beginDrag("move", event)}
         style={{
@@ -1628,11 +1628,10 @@ function OperationArea({
       <div className="flex items-center gap-2">
         <RotationDial onChange={onSetCropRotation} value={cropRotation} />
         <button
-          className={`spring-hover rounded-full px-4 py-2 text-sm font-medium shadow-[0_10px_40px_rgba(0,0,0,0.45)] disabled:opacity-35 ${
-            cropNeedsAi
-              ? "bg-amber-300 text-black hover:bg-amber-200"
-              : "bg-emerald-300 text-black hover:bg-emerald-200"
-          }`}
+          className={`spring-hover rounded-full px-4 py-2 text-sm font-medium shadow-[0_10px_40px_rgba(0,0,0,0.45)] disabled:opacity-35 ${cropNeedsAi
+            ? "bg-amber-300 text-black hover:bg-amber-200"
+            : "bg-emerald-300 text-black hover:bg-emerald-200"
+            }`}
           onClick={onApplyCrop}
           type="button"
         >
@@ -1668,24 +1667,24 @@ function OperationArea({
       <div className="flex flex-wrap items-center gap-2" key={suggestionSetKey}>
         {suggestions.length === 0
           ? [72, 96, 80, 108, 64].map((width, index) => (
-              <span
-                aria-hidden
-                className="skeleton-pulse h-9 rounded-full bg-white/10"
-                key={index}
-                style={{ width, animationDelay: `${index * 140}ms` }}
-              />
-            ))
+            <span
+              aria-hidden
+              className="skeleton-pulse h-9 rounded-full bg-white/10"
+              key={index}
+              style={{ width, animationDelay: `${index * 140}ms` }}
+            />
+          ))
           : suggestions.map((suggestion, index) => (
-              <button
-                className="pop-in liquid-glass rounded-full px-4 py-2 text-sm text-white/85"
-                key={suggestion.id}
-                onClick={() => onUseSuggestion(suggestion)}
-                style={{ animationDelay: `${index * 30}ms` }}
-                type="button"
-              >
-                {suggestion.label}
-              </button>
-            ))}
+            <button
+              className="pop-in liquid-glass rounded-full px-4 py-2 text-sm text-white/85"
+              key={suggestion.id}
+              onClick={() => onUseSuggestion(suggestion)}
+              style={{ animationDelay: `${index * 30}ms` }}
+              type="button"
+            >
+              {suggestion.label}
+            </button>
+          ))}
       </div>
     );
   }
@@ -1723,30 +1722,29 @@ function ToolRail({
   return (
     <nav aria-label="Editor tools" className="pointer-events-auto -my-12 flex justify-center overflow-x-auto px-12 py-12">
       <div className="pointer-events-auto flex w-max min-w-full justify-center gap-1.5">
-      {tools.map((tool, index) => {
-        const Icon = iconMap[tool.icon as keyof typeof iconMap] ?? Circle;
-        const active = tool.id === selectedToolId;
-        return (
-          <button
-            className="pop-in rail-button flex min-w-20 flex-col items-center gap-2 text-xs text-white/70"
-            key={tool.id}
-            onClick={() => onSelectTool(tool.id)}
-            style={{ animationDelay: `${index * 30}ms` }}
-            type="button"
-          >
-            <span
-              className={`grid size-14 place-items-center rounded-full ${
-                active
+        {tools.map((tool, index) => {
+          const Icon = iconMap[tool.icon as keyof typeof iconMap] ?? Circle;
+          const active = tool.id === selectedToolId;
+          return (
+            <button
+              className="pop-in rail-button flex min-w-20 flex-col items-center gap-2 text-xs text-white/70"
+              key={tool.id}
+              onClick={() => onSelectTool(tool.id)}
+              style={{ animationDelay: `${index * 30}ms` }}
+              type="button"
+            >
+              <span
+                className={`grid size-14 place-items-center rounded-full ${active
                   ? "border border-emerald-300 bg-emerald-300 text-black"
                   : "liquid-glass-static text-white"
-              }`}
-            >
-              <Icon size={22} />
-            </span>
-            {tool.label}
-          </button>
-        );
-      })}
+                  }`}
+              >
+                <Icon size={22} />
+              </span>
+              {tool.label}
+            </button>
+          );
+        })}
       </div>
     </nav>
   );
@@ -1766,42 +1764,41 @@ function ActionRail({
   return (
     <nav aria-label="Subtools" className="pointer-events-auto -my-12 flex items-center justify-center overflow-x-auto px-12 py-12">
       <div className="pointer-events-auto flex w-max min-w-full items-end justify-center gap-1.5">
-      <button
-        aria-label="Close"
-        className="pop-in rail-button flex min-w-10 flex-col items-center gap-2 self-end pb-5 text-white/55 hover:text-white/85"
-        onClick={onClose}
-        style={{ animationDelay: "0ms" }}
-        title="Close"
-        type="button"
-      >
-        <span className="liquid-glass-static grid size-8 place-items-center rounded-full">
-          <X size={14} />
-        </span>
-      </button>
-      {actions.map((action, index) => {
-        const active = action.id === selectedActionId;
-        const Icon = action.icon ? iconMap[action.icon as keyof typeof iconMap] : undefined;
-        return (
-          <button
-            className="pop-in rail-button flex min-w-20 flex-col items-center gap-2 text-xs text-white/70"
-            key={action.id}
-            onClick={() => onSelectAction(action.id)}
-            style={{ animationDelay: `${(index + 1) * 30}ms` }}
-            type="button"
-          >
-            <span
-              className={`grid size-14 place-items-center rounded-full text-sm font-semibold ${
-                active
+        <button
+          aria-label="Close"
+          className="pop-in rail-button flex min-w-10 flex-col items-center gap-2 self-end pb-5 text-white/55 hover:text-white/85"
+          onClick={onClose}
+          style={{ animationDelay: "0ms" }}
+          title="Close"
+          type="button"
+        >
+          <span className="liquid-glass-static grid size-8 place-items-center rounded-full">
+            <X size={14} />
+          </span>
+        </button>
+        {actions.map((action, index) => {
+          const active = action.id === selectedActionId;
+          const Icon = action.icon ? iconMap[action.icon as keyof typeof iconMap] : undefined;
+          return (
+            <button
+              className="pop-in rail-button flex min-w-20 flex-col items-center gap-2 text-xs text-white/70"
+              key={action.id}
+              onClick={() => onSelectAction(action.id)}
+              style={{ animationDelay: `${(index + 1) * 30}ms` }}
+              type="button"
+            >
+              <span
+                className={`grid size-14 place-items-center rounded-full text-sm font-semibold ${active
                   ? "border border-emerald-300 bg-emerald-300 text-black"
                   : "liquid-glass-static text-white"
-              }`}
-            >
-              {Icon ? <Icon size={22} /> : action.label.slice(0, 2)}
-            </span>
-            {action.label}
-          </button>
-        );
-      })}
+                  }`}
+              >
+                {Icon ? <Icon size={22} /> : action.label.slice(0, 2)}
+              </span>
+              {action.label}
+            </button>
+          );
+        })}
       </div>
     </nav>
   );
@@ -1865,33 +1862,33 @@ function HistoryStack({
       <div className="relative" style={{ width: itemSize, height: itemSize }}>
         {!isOpen
           ? stackPreview.map((operation, layer) => {
-              const depth = layer + 1;
-              const seed = hashSeed(operation.id);
-              const rotation = ((seed % 1000) / 1000 - 0.5) * 14;
-              const offsetX = depth * 6 + (((seed >> 5) % 100) / 100 - 0.5) * 4;
-              const offsetY = -depth * 6 + (((seed >> 11) % 100) / 100 - 0.5) * 4;
-              return (
-                <div
-                  aria-hidden
-                  className="absolute inset-0 overflow-hidden rounded-xl border border-white/15 bg-black/40 shadow-[0_10px_30px_rgba(0,0,0,0.5)] transition-opacity duration-200"
-                  key={operation.id}
-                  style={{
-                    transform: `translate(${offsetX}px, ${offsetY}px) rotate(${rotation}deg) scale(${1 - depth * 0.05})`,
-                    transformOrigin: "50% 100%",
-                    opacity: 0.9 - depth * 0.18,
-                    zIndex: -depth,
-                  }}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    alt=""
-                    className="h-full w-full object-cover"
-                    draggable={false}
-                    src={operation.image.dataUrl}
-                  />
-                </div>
-              );
-            })
+            const depth = layer + 1;
+            const seed = hashSeed(operation.id);
+            const rotation = ((seed % 1000) / 1000 - 0.5) * 14;
+            const offsetX = depth * 6 + (((seed >> 5) % 100) / 100 - 0.5) * 4;
+            const offsetY = -depth * 6 + (((seed >> 11) % 100) / 100 - 0.5) * 4;
+            return (
+              <div
+                aria-hidden
+                className="absolute inset-0 overflow-hidden rounded-xl border border-white/15 bg-black/40 shadow-[0_10px_30px_rgba(0,0,0,0.5)] transition-opacity duration-200"
+                key={operation.id}
+                style={{
+                  transform: `translate(${offsetX}px, ${offsetY}px) rotate(${rotation}deg) scale(${1 - depth * 0.05})`,
+                  transformOrigin: "50% 100%",
+                  opacity: 0.9 - depth * 0.18,
+                  zIndex: -depth,
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  alt=""
+                  className="h-full w-full object-cover"
+                  draggable={false}
+                  src={operation.image.dataUrl}
+                />
+              </div>
+            );
+          })
           : null}
 
         {fanItems.map(({ operation, index }, position) => {
@@ -1959,9 +1956,8 @@ function HistoryStack({
           type="button"
         >
           <div
-            className={`liquid-glass-static h-full w-full overflow-hidden rounded-xl ${
-              isOpen ? "!border-emerald-300" : ""
-            }`}
+            className={`liquid-glass-static h-full w-full overflow-hidden rounded-xl ${isOpen ? "!border-emerald-300" : ""
+              }`}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img

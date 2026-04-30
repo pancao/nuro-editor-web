@@ -1,5 +1,5 @@
 import { mockGeneratedImage, mockOutpaintImage, mockParams, mockSuggestions } from "@/lib/ai/mock-provider";
-import { getPromptTemplate } from "@/lib/prompts";
+import { getPromptTemplate, promptTemplates } from "@/lib/prompts";
 import { editorTools } from "@/lib/tools";
 import type {
   AdjustmentParams,
@@ -25,6 +25,27 @@ function templateBodyForAction(toolId: ToolId, actionId: string | undefined): st
   if (!id) return undefined;
   return getPromptTemplate(id)?.template;
 }
+
+/**
+ * The full library of suggestion-capability prompt bodies, formatted as one
+ * stable string. Used as the system prompt for batch suggestion calls so the
+ * provider's prefix cache can hit on every batch regardless of which targets
+ * appear. Sorted by id for byte-stability.
+ */
+const ALL_SUGGESTION_TEMPLATES_SYSTEM_PROMPT = (() => {
+  const bodies = promptTemplates
+    .filter((t) => t.capability === "suggestions")
+    .slice()
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((t) => `=== ${t.id} ===\n${t.template}`);
+  return [
+    "You are an AI photo editing assistant. Return only valid JSON. Do not include markdown fences.",
+    "",
+    "Below is the full library of creative directions, keyed by promptTemplateId. For each batch request you'll be told which (toolId, actionId) targets to address — match each target to the matching templateId and follow that section's direction.",
+    "",
+    bodies.join("\n\n"),
+  ].join("\n");
+})();
 
 type BasePayload = {
   image?: string;
@@ -274,20 +295,26 @@ async function callOpenAICompatibleJson<T>(
   const templateBody =
     operation === "suggestions" ? templateBodyForAction(payload.toolId, payload.actionId) : undefined;
 
+  // System prompt holds the static "creative direction" so providers with
+  // automatic prefix caching (OpenAI, Anthropic, Gemini) get a cache hit on
+  // the 2nd call onward for the same (toolId, actionId). Keep this prefix
+  // strictly stable — anything dynamic (toolId, image) goes in the user msg.
+  const systemPrompt =
+    operation === "suggestions" && templateBody
+      ? `You are an AI photo editing assistant. Return only valid JSON. Do not include markdown fences.\n\n=== Creative direction ===\n${templateBody}`
+      : "You are an AI photo editing assistant. Return only valid JSON. Do not include markdown fences.";
+
   const userText =
     operation === "suggestions"
       ? [
           `Tool: ${payload.toolId}`,
           `Action: ${payload.actionId ?? "default"}`,
-          templateBody ? `\nCreative direction:\n${templateBody}\n` : "",
-          "Return exactly 5 concise photo editing suggestions.",
+          "Return exactly 5 photo editing suggestions following the creative direction in the system prompt.",
           "Each `label` is a short Chinese-or-English headline (≤24 chars).",
           "Each `prompt` is a fully-formed instruction for an image-generation model — specific colors, contrast, grain, references — never a single adjective.",
           "Return minified JSON only, with no markdown and no trailing commentary.",
-          "JSON shape: {\"suggestions\":[{\"id\":\"short-id\",\"label\":\"Short label\",\"prompt\":\"actionable edit prompt\",\"description\":\"optional short description\"}]}",
-        ]
-          .filter(Boolean)
-          .join("\n")
+          "JSON shape: {\"suggestions\":[{\"id\":\"short-id\",\"label\":\"Short label\",\"prompt\":\"actionable edit prompt\"}]}",
+        ].join("\n")
       : [
           `Tool: ${payload.toolId}`,
           `Action: ${payload.actionId ?? "default"}`,
@@ -298,11 +325,7 @@ async function callOpenAICompatibleJson<T>(
         ].join("\n");
 
   const messages: OpenAICompatibleMessage[] = [
-    {
-      role: "system",
-      content:
-        "You are an AI photo editing assistant. Return only valid JSON. Do not include markdown fences.",
-    },
+    { role: "system", content: systemPrompt },
     {
       role: "user",
       content: payload.image
@@ -356,16 +379,17 @@ async function callOpenAICompatibleBatchSuggestions(payload: BatchSuggestionsPay
     throw new Error("AI_BASE_URL, AI_API_KEY, and AI_VISION_MODEL are required");
   }
 
-  // Annotate each target with its template's creative direction so the model
-  // knows what kind of suggestions each toolId/actionId expects (e.g. for
-  // color/filter we want film stocks + cinematic looks; for style we want
-  // photographer / movie / era references). Targets without a template fall
-  // back to a generic line.
-  const targetSections = payload.targets.map((target, index) => {
-    const body = templateBodyForAction(target.toolId, target.actionId);
-    const header = `Target ${index + 1} — toolId:${target.toolId} actionId:${target.actionId} (${target.label})`;
-    if (!body) return `${header}\n(generic — return useful editing suggestions for this category)`;
-    return `${header}\n${body}`;
+  // Resolve each target to its templateId so the user prompt is short and the
+  // big creative direction stays in the cacheable system prompt.
+  const targetEntries = payload.targets.map((target) => {
+    const tool = editorTools.find((t) => t.id === target.toolId);
+    const action = tool?.actions.find((a) => a.id === target.actionId);
+    return {
+      toolId: target.toolId,
+      actionId: target.actionId,
+      label: target.label,
+      promptTemplateId: action?.promptTemplateId,
+    };
   });
 
   const userText = [
@@ -374,20 +398,16 @@ async function callOpenAICompatibleBatchSuggestions(payload: BatchSuggestionsPay
     "Return exactly 5 suggestions per target.",
     "Each `label` is a short headline (≤24 chars).",
     "Each `prompt` is a fully-formed instruction for an image-generation model — specific colors, contrast, grain, references — never a single adjective.",
-    "Different targets cover different creative buckets — read each target's instructions carefully and DO NOT reuse the same suggestions across targets.",
+    "Different targets must follow different sections of the creative direction in the system prompt. DO NOT reuse the same suggestions across targets.",
     "Return minified JSON only, with no markdown and no trailing commentary.",
     "",
-    targetSections.join("\n\n"),
+    `Targets: ${JSON.stringify(targetEntries)}`,
     "",
-    "JSON shape: {\"groups\":[{\"toolId\":\"style\",\"actionId\":\"default\",\"suggestions\":[{\"id\":\"short-id\",\"label\":\"Short label\",\"prompt\":\"actionable edit prompt\",\"description\":\"optional short description\"}]}]}",
+    "JSON shape: {\"groups\":[{\"toolId\":\"style\",\"actionId\":\"default\",\"suggestions\":[{\"id\":\"short-id\",\"label\":\"Short label\",\"prompt\":\"actionable edit prompt\"}]}]}",
   ].join("\n");
 
   const messages: OpenAICompatibleMessage[] = [
-    {
-      role: "system",
-      content:
-        "You are an AI photo editing assistant. Return only valid JSON. Do not include markdown fences.",
-    },
+    { role: "system", content: ALL_SUGGESTION_TEMPLATES_SYSTEM_PROMPT },
     {
       role: "user",
       content: payload.image
