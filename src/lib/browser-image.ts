@@ -28,6 +28,52 @@ export async function fileToImageAsset(file: File): Promise<ImageAsset> {
   };
 }
 
+/**
+ * Resize + JPEG-encode an image so it fits inside platform request-body limits
+ * (Vercel: 4.5 MB; Cloud Run: 32 MB). The intermediate canvas operations and
+ * source images both default to PNG which can easily exceed those limits when
+ * the user uploads a phone photo. AI vision/image models internally downscale
+ * to ~1024–1568 px anyway, so 1280 px max + JPEG q=0.82 is a safe ceiling
+ * (≈300–600 KB after base64) without visibly hurting model quality. Returns a
+ * data: URL ready to drop into a JSON payload.
+ */
+export async function compressImageForRequest(
+  imageAsset: { dataUrl: string },
+  options: { maxDimension?: number; quality?: number; skipBelowBytes?: number } = {},
+): Promise<string> {
+  const maxDim = options.maxDimension ?? 1280;
+  const quality = options.quality ?? 0.82;
+  // ~1 MB after base64 ≈ 1.33 M chars in the data URL. Anything smaller is
+  // already well inside Vercel's 4.5 MB body limit, so skip the canvas dance.
+  // Also makes the helper a no-op in jsdom-based tests where loadImage doesn't
+  // resolve for fake data URLs.
+  const skipBelow = options.skipBelowBytes ?? 1_000_000;
+  if (imageAsset.dataUrl.length < skipBelow) return imageAsset.dataUrl;
+
+  try {
+    const image = await loadImage(imageAsset.dataUrl);
+    const longest = Math.max(image.naturalWidth, image.naturalHeight);
+    const ratio = longest > 0 ? Math.min(1, maxDim / longest) : 1;
+    const w = Math.max(1, Math.round(image.naturalWidth * ratio));
+    const h = Math.max(1, Math.round(image.naturalHeight * ratio));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas is not available");
+    // Fill white so JPEG (no alpha) doesn't end up with weird black
+    // backgrounds for transparent PNGs.
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(image, 0, 0, w, h);
+    return canvas.toDataURL("image/jpeg", quality);
+  } catch {
+    // Compression best-effort — fall back to the original data URL rather
+    // than blocking the user's request entirely.
+    return imageAsset.dataUrl;
+  }
+}
+
 export async function dataUrlToAsset(dataUrl: string, name: string): Promise<ImageAsset> {
   const image = await loadImage(dataUrl);
   return {

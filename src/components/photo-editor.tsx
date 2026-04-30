@@ -41,6 +41,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { withBrowserAISettings } from "@/lib/ai-settings";
 import {
   applyAdjustmentsToImage,
+  compressImageForRequest,
   createOutpaintGuideImage,
   cropImageWithRotation,
   dataUrlToAsset,
@@ -122,8 +123,30 @@ async function postJson<T>(url: string, payload: unknown): Promise<T> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(withBrowserAISettings(payload as Record<string, unknown>)),
   });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error ?? "Request failed");
+
+  // Non-JSON error pages (Vercel "Request Entity Too Large", Nginx 502s, etc.)
+  // crash response.json() with "Unexpected token 'R'..." — read the raw text
+  // first and surface a clean message.
+  const raw = await response.text();
+  let body: unknown;
+  try {
+    body = raw ? JSON.parse(raw) : {};
+  } catch {
+    if (!response.ok) {
+      if (response.status === 413) {
+        throw new Error(
+          "Image is too large for the server (413). Try a smaller photo or wait — the editor now compresses uploads automatically.",
+        );
+      }
+      throw new Error(`Server error ${response.status}: ${raw.slice(0, 160)}`);
+    }
+    throw new Error("Server returned a non-JSON response.");
+  }
+
+  if (!response.ok) {
+    const message = (body as { error?: string })?.error ?? `Request failed (${response.status})`;
+    throw new Error(message);
+  }
   // Dev-only signal: backend fell back to mock/backup data instead of the configured provider.
   if (
     process.env.NODE_ENV !== "production" &&
@@ -541,8 +564,9 @@ export function PhotoEditor() {
     if (suggestionCache[key] || loadingSuggestions[key] || !action.requiresSuggestion) return;
     setLoadingSuggestions((previous) => ({ ...previous, [key]: true }));
     try {
+      const compressed = await compressImageForRequest(image);
       const response = await postJson<{ suggestions: AISuggestion[] }>("/api/ai/suggestions", {
-        image: image.dataUrl,
+        image: compressed,
         toolId,
         actionId: action.id,
         context: { image: { width: image.width, height: image.height } },
@@ -568,8 +592,9 @@ export function PhotoEditor() {
 
   async function detectScene(image: ImageAsset) {
     try {
+      const compressed = await compressImageForRequest(image);
       const response = await postJson<{ hasPeople?: boolean }>("/api/ai/scene", {
-        image: image.dataUrl,
+        image: compressed,
       });
       const detected = response.hasPeople === true;
       setHasPeople(detected);
@@ -593,8 +618,9 @@ export function PhotoEditor() {
       ),
     );
     try {
+      const compressed = await compressImageForRequest(image);
       const response = await postJson<{ groups: SuggestionGroup[] }>("/api/ai/suggestions/batch", {
-        image: image.dataUrl,
+        image: compressed,
         targets,
         context: { image: { width: image.width, height: image.height } },
       });
@@ -771,8 +797,9 @@ export function PhotoEditor() {
     if (selectedAction.flow === "ai-suggest-params") {
       setJob({ status: "loading", message: "AI is mapping suggestion to parameters" });
       try {
+        const compressed = await compressImageForRequest(currentImage);
         const response = await postJson<{ params: AdjustmentParams }>("/api/ai/params", {
-          image: currentImage.dataUrl,
+          image: compressed,
           toolId: selectedTool.id,
           actionId: selectedAction.id,
           selection: suggestion,
@@ -790,8 +817,9 @@ export function PhotoEditor() {
     if (!currentImage || !selectedAction) return;
     setJob({ status: "loading", message: "Generating image" });
     try {
+      const compressed = await compressImageForRequest(currentImage);
       const response = await postJson<{ image: string }>("/api/ai/generate", {
-        image: currentImage.dataUrl,
+        image: compressed,
         toolId: selectedTool.id,
         actionId: selectedAction.id,
         prompt,
@@ -873,8 +901,9 @@ export function PhotoEditor() {
   async function outpaint(mappedCrop: CropBox, rotation = 0) {
     if (!originalImage) throw new Error("No image loaded");
     const guideImage = await createOutpaintGuideImage(originalImage, mappedCrop, rotation);
+    const compressed = await compressImageForRequest(guideImage);
     const response = await postJson<{ image: string }>("/api/ai/outpaint", {
-      image: guideImage.dataUrl,
+      image: compressed,
       toolId: "crop",
       actionId: "frame",
       cropBox: mappedCrop,
