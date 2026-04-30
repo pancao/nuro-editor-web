@@ -316,8 +316,6 @@ export function PhotoEditor() {
       ? imageSpecificSuggestions
       : suggestionDisplayCache[actionSuggestionKey(selectedTool.id, selectedAction?.id ?? "")] ?? [];
   const suggestionSetKey = selectedSuggestions.map((suggestion) => suggestion.id).join(":");
-  const promptLabEnabled =
-    process.env.NODE_ENV === "development" || process.env.NEXT_PUBLIC_ENABLE_PROMPT_LAB === "true";
   const isImageProcessing =
     job.status === "loading" &&
     (job.message?.includes("Generating") || job.message?.includes("Expanding"));
@@ -1021,6 +1019,13 @@ export function PhotoEditor() {
       ) : null}
 
       <div
+        aria-label="Alpha testing"
+        className="pointer-events-none absolute left-1/2 top-4 z-50 -translate-x-1/2 rounded-full border border-white/25 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/75 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur-md"
+      >
+        alpha
+      </div>
+
+      <div
         ref={stageRef}
         className="absolute inset-0 z-10 overflow-hidden"
         onLostPointerCapture={onStagePointerEnd}
@@ -1105,14 +1110,12 @@ export function PhotoEditor() {
             <Upload size={16} />
             Upload
           </button>
-          {promptLabEnabled ? (
-            <Link
-              className="liquid-glass rounded-full px-3 py-2 text-sm text-white/85"
-              href="/prompt-lab"
-            >
-              Prompt Lab
-            </Link>
-          ) : null}
+          <Link
+            className="liquid-glass rounded-full px-3 py-2 text-sm text-white/85"
+            href="/prompt-lab"
+          >
+            Prompt Lab
+          </Link>
           <button
             className="liquid-glass grid size-10 place-items-center rounded-full"
             disabled={historyIndex <= 0}
