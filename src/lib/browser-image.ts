@@ -123,6 +123,7 @@ export async function cropImage(imageAsset: ImageAsset, crop: CropBox): Promise<
 export async function createOutpaintGuideImage(
   imageAsset: ImageAsset,
   crop: CropBox,
+  rotationDeg = 0,
 ): Promise<ImageAsset> {
   const image = await loadImage(imageAsset.dataUrl);
   const canvas = document.createElement("canvas");
@@ -135,9 +136,53 @@ export async function createOutpaintGuideImage(
   }
 
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(image, -crop.x, -crop.y, image.naturalWidth, image.naturalHeight);
+  if (rotationDeg) {
+    // Rotate around the crop's anchor in source space (top-left of crop box),
+    // then draw the source image so its origin maps to (-crop.x, -crop.y) in
+    // the rotated frame.
+    context.translate(-crop.x, -crop.y);
+    context.translate(image.naturalWidth / 2, image.naturalHeight / 2);
+    context.rotate((rotationDeg * Math.PI) / 180);
+    context.drawImage(image, -image.naturalWidth / 2, -image.naturalHeight / 2);
+  } else {
+    context.drawImage(image, -crop.x, -crop.y, image.naturalWidth, image.naturalHeight);
+  }
 
   return dataUrlToAsset(canvas.toDataURL("image/png"), `${imageAsset.name}-outpaint-guide.png`);
+}
+
+/**
+ * Crop a region from a source image, optionally with rotation applied first.
+ * The crop rectangle is in the *rotated* image's coordinate space. The rotation
+ * is performed about the source image's center, matching the live preview where
+ * the displayed image rotates around its center underneath an axis-aligned
+ * crop box.
+ */
+export async function cropImageWithRotation(
+  imageAsset: ImageAsset,
+  crop: CropBox,
+  rotationDeg: number,
+): Promise<ImageAsset> {
+  if (!rotationDeg) return cropImage(imageAsset, crop);
+
+  const image = await loadImage(imageAsset.dataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(crop.width));
+  canvas.height = Math.max(1, Math.round(crop.height));
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    throw new Error("Canvas is not available");
+  }
+
+  // Rotate the source about its center, then position so that (crop.x, crop.y)
+  // in the rotated frame lands at the canvas origin (0, 0).
+  context.translate(-crop.x, -crop.y);
+  context.translate(image.naturalWidth / 2, image.naturalHeight / 2);
+  context.rotate((rotationDeg * Math.PI) / 180);
+  context.drawImage(image, -image.naturalWidth / 2, -image.naturalHeight / 2);
+
+  return dataUrlToAsset(canvas.toDataURL("image/png"), `${imageAsset.name}-crop.png`);
 }
 
 export function downloadDataUrl(dataUrl: string, filename: string) {

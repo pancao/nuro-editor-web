@@ -41,7 +41,7 @@ import { withBrowserAISettings } from "@/lib/ai-settings";
 import {
   applyAdjustmentsToImage,
   createOutpaintGuideImage,
-  cropImage,
+  cropImageWithRotation,
   dataUrlToAsset,
   downloadDataUrl,
   fileToImageAsset,
@@ -238,6 +238,10 @@ export function PhotoEditor() {
   const [history, setHistory] = useState<EditOperation[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [currentSourceRect, setCurrentSourceRect] = useState<CropBox | null>(null);
+  // Rotation (degrees) baked into currentImage relative to originalImage.
+  // Mirrors currentSourceRect — updated alongside it on crop ops, restore,
+  // undo/redo, and import.
+  const [currentRotation, setCurrentRotation] = useState(0);
   const [historyStackOpen, setHistoryStackOpen] = useState(false);
   const [selectedToolId, setSelectedToolId] = useState<ToolId>("light");
   const [selectedActionId, setSelectedActionId] = useState("auto-exposure");
@@ -254,6 +258,9 @@ export function PhotoEditor() {
   const [lastAdjustmentByAction, setLastAdjustmentByAction] = useState<Record<string, number>>({});
   const [job, setJob] = useState<GenerationJob>({ status: "idle" });
   const [cropBox, setCropBox] = useState<CropBox>({ x: 0, y: 0, width: 1000, height: 1000 });
+  // Rotation (degrees, clockwise) applied to the originalImage while the crop
+  // tool is active. Reset on tool/action change and on apply.
+  const [cropRotation, setCropRotation] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -314,8 +321,17 @@ export function PhotoEditor() {
   const isImageProcessing =
     job.status === "loading" &&
     (job.message?.includes("Generating") || job.message?.includes("Expanding"));
+  // While the Crop tool is active, cropBox is authored directly in
+  // originalImage coordinates (so users can drag handles past the current
+  // crop's edges to recover original pixels). For any other tool, the legacy
+  // mapping via the previous sourceRect is still used for callers that read
+  // cropInOriginalSpace.
   const cropInOriginalSpace =
-    currentImage && currentSourceRect ? mapCropToSourceRect(cropBox, currentSourceRect, currentImage) : cropBox;
+    selectedToolId === "crop"
+      ? cropBox
+      : currentImage && currentSourceRect
+        ? mapCropToSourceRect(cropBox, currentSourceRect, currentImage)
+        : cropBox;
 
   useEffect(() => {
     loadEditorSession()
@@ -332,6 +348,7 @@ export function PhotoEditor() {
               ? { x: 0, y: 0, width: session.currentImage.width, height: session.currentImage.height }
               : null),
         );
+        setCurrentRotation(operation?.rotation ?? 0);
         if (session.currentImage) {
           void detectScene(session.currentImage);
           void refreshAllRecommendations(session.currentImage);
@@ -345,30 +362,35 @@ export function PhotoEditor() {
     saveEditorSession({ originalImage, currentImage, history, historyIndex }).catch(() => undefined);
   }, [originalImage, currentImage, history, historyIndex]);
 
+  // While the Crop tool is active the workspace shows the *originalImage* so
+  // the user can drag the crop handles outward to recover pixels that the
+  // current edit had cropped away. Otherwise the workspace shows currentImage.
+  const workspaceImage = selectedToolId === "crop" && originalImage ? originalImage : currentImage;
+
   const imageFit = useMemo(() => {
-    if (!currentImage || stageSize.width === 0 || stageSize.height === 0) {
+    if (!workspaceImage || stageSize.width === 0 || stageSize.height === 0) {
       return { width: 0, height: 0 };
     }
     const padding = 96;
     const baseScale = 0.72;
     const availableW = Math.max(64, stageSize.width - padding);
     const availableH = Math.max(64, stageSize.height - padding);
-    const imgRatio = currentImage.width / currentImage.height;
+    const imgRatio = workspaceImage.width / workspaceImage.height;
     const stageRatio = availableW / availableH;
     const fit =
       imgRatio > stageRatio
         ? { width: availableW, height: availableW / imgRatio }
         : { width: availableH * imgRatio, height: availableH };
     return { width: fit.width * baseScale, height: fit.height * baseScale };
-  }, [currentImage, stageSize]);
+  }, [workspaceImage, stageSize]);
 
   const renderedBox: RenderedImageBox | null =
-    currentImage && imageFit.width > 0
+    workspaceImage && imageFit.width > 0
       ? {
           width: imageFit.width,
           height: imageFit.height,
-          naturalWidth: currentImage.width,
-          naturalHeight: currentImage.height,
+          naturalWidth: workspaceImage!.width,
+          naturalHeight: workspaceImage!.height,
         }
       : null;
 
@@ -610,6 +632,7 @@ export function PhotoEditor() {
     setHistory([operation]);
     setHistoryIndex(0);
     setCurrentSourceRect(operation.sourceRect ?? null);
+    setCurrentRotation(0);
     setSelectedToolId("light");
     setSelectedActionId("auto-exposure");
     setRailMode("tools");
@@ -644,6 +667,10 @@ export function PhotoEditor() {
     setCurrentSourceRect(
       next.sourceRect ?? currentSourceRect ?? { x: 0, y: 0, width: next.image.width, height: next.image.height },
     );
+    if (next.sourceRect !== undefined) {
+      // Geometry changed — adopt this op's rotation (0 if not set).
+      setCurrentRotation(next.rotation ?? 0);
+    }
     void refreshAllRecommendations(next.image);
   }
 
@@ -655,6 +682,7 @@ export function PhotoEditor() {
     setCurrentSourceRect(
       operation.sourceRect ?? { x: 0, y: 0, width: operation.image.width, height: operation.image.height },
     );
+    setCurrentRotation(operation.rotation ?? 0);
     setCropBox({ x: 0, y: 0, width: operation.image.width, height: operation.image.height });
     setLastAdjustmentByAction({});
     setAdjustmentValue(0);
@@ -675,6 +703,7 @@ export function PhotoEditor() {
         height: history[nextIndex].image.height,
       },
     );
+    setCurrentRotation(history[nextIndex].rotation ?? 0);
     setCropBox({ x: 0, y: 0, width: history[nextIndex].image.width, height: history[nextIndex].image.height });
     void refreshAllRecommendations(history[nextIndex].image);
   }
@@ -692,6 +721,7 @@ export function PhotoEditor() {
         height: history[nextIndex].image.height,
       },
     );
+    setCurrentRotation(history[nextIndex].rotation ?? 0);
     setCropBox({ x: 0, y: 0, width: history[nextIndex].image.width, height: history[nextIndex].image.height });
     void refreshAllRecommendations(history[nextIndex].image);
   }
@@ -783,27 +813,63 @@ export function PhotoEditor() {
     if (!currentImage || !selectedAction) return;
     if (!originalImage) return;
     const mappedCrop = cropInOriginalSpace;
+    const rotation = cropRotation;
     const localCrop = isCropWithinImage(mappedCrop, originalImage);
     setJob({ status: "loading", message: localCrop ? "Cropping locally" : "Expanding with AI" });
     try {
-      const image = localCrop ? await cropImage(originalImage, mappedCrop) : await outpaint(mappedCrop);
-      pushOperation({
-        toolId: "crop",
-        actionId: selectedAction.id,
-        label: localCrop ? "Crop" : "AI Expand",
-        image,
-        sourceRect: mappedCrop,
-      });
-      setCropBox({ x: 0, y: 0, width: image.width, height: image.height });
+      const image = localCrop
+        ? await cropImageWithRotation(originalImage, mappedCrop, rotation)
+        : await outpaint(mappedCrop, rotation);
+
+      if (localCrop) {
+        // Local crop: keep the originalImage chain intact so re-entering Crop
+        // can reveal pixels we cropped away. Persist this op's geometry +
+        // rotation so the box restores exactly next time.
+        pushOperation({
+          toolId: "crop",
+          actionId: selectedAction.id,
+          label: rotation
+            ? `Crop ${rotation > 0 ? "+" : ""}${Math.round(rotation)}°`
+            : "Crop",
+          image,
+          sourceRect: mappedCrop,
+          rotation: rotation || undefined,
+        });
+      } else {
+        // AI Expand: the result is a brand-new baseline. Promote it to
+        // originalImage so subsequent crops work against this image and the
+        // crop box fills the new frame on re-entry. No geometry to track —
+        // rotation is baked into the new pixels.
+        setOriginalImage(image);
+        pushOperation({
+          toolId: "crop",
+          actionId: selectedAction.id,
+          label: rotation
+            ? `AI Expand ${rotation > 0 ? "+" : ""}${Math.round(rotation)}°`
+            : "AI Expand",
+          image,
+          sourceRect: { x: 0, y: 0, width: image.width, height: image.height },
+        });
+      }
+
+      // Exit crop mode: deselect the tool and drop the user back on the
+      // tool rail so the canvas surfaces the new (cropped) currentImage
+      // instead of the originalImage workspace.
+      const lightTool = availableTools.find((tool) => tool.id === "light");
+      setSelectedToolId("light");
+      setSelectedActionId(lightTool?.actions[0]?.id ?? "");
+      setRailMode("tools");
+      setOperationVisible(false);
+      setCustomPrompt("");
       setJob({ status: "success" });
     } catch (error) {
       setJob({ status: "error", message: error instanceof Error ? error.message : "Crop failed" });
     }
   }
 
-  async function outpaint(mappedCrop: CropBox) {
+  async function outpaint(mappedCrop: CropBox, rotation = 0) {
     if (!originalImage) throw new Error("No image loaded");
-    const guideImage = await createOutpaintGuideImage(originalImage, mappedCrop);
+    const guideImage = await createOutpaintGuideImage(originalImage, mappedCrop, rotation);
     const response = await postJson<{ image: string }>("/api/ai/outpaint", {
       image: guideImage.dataUrl,
       toolId: "crop",
@@ -812,6 +878,7 @@ export function PhotoEditor() {
       context: {
         guideImage: { width: guideImage.width, height: guideImage.height },
         originalImage: { width: originalImage.width, height: originalImage.height },
+        rotation,
       },
     });
     return dataUrlToAsset(response.image, "outpaint.png");
@@ -827,8 +894,20 @@ export function PhotoEditor() {
     setOperationVisible(true);
     setCustomPrompt("");
     setAdjustmentValue(action ? (lastAdjustmentByAction[action.id] ?? 0) : 0);
-    if (tool.id === "crop" && currentImage) {
-      setCropBox({ x: 0, y: 0, width: currentImage.width, height: currentImage.height });
+    if (tool.id === "crop" && originalImage) {
+      // Author cropBox in originalImage coordinates so the user can drag
+      // handles outward past the current crop's edges. Also restore the
+      // rotation that produced the current image so the workspace mirrors
+      // what the user is editing.
+      setCropBox(
+        currentSourceRect ?? {
+          x: 0,
+          y: 0,
+          width: originalImage.width,
+          height: originalImage.height,
+        },
+      );
+      setCropRotation(currentRotation);
     }
     if (currentImage && action?.requiresSuggestion) {
       void fetchSingleSuggestions(currentImage, tool.id, action);
@@ -975,10 +1054,15 @@ export function PhotoEditor() {
                   isImageProcessing ? "image-processing-pulse" : ""
                 }`}
                 draggable={false}
-                src={currentImage.dataUrl}
-                style={livePreviewFilter ? { filter: livePreviewFilter } : undefined}
+                src={(workspaceImage ?? currentImage).dataUrl}
+                style={{
+                  ...(livePreviewFilter ? { filter: livePreviewFilter } : {}),
+                  ...(selectedTool.id === "crop" && cropRotation
+                    ? { transform: `rotate(${cropRotation}deg)` }
+                    : {}),
+                }}
               />
-              {selectedTool.id === "crop" ? (
+              {selectedTool.id === "crop" && operationVisible && workspaceImage ? (
                 <div
                   className="absolute inset-0"
                   onPointerDown={(event) => event.stopPropagation()}
@@ -986,7 +1070,7 @@ export function PhotoEditor() {
                 >
                   <CropOverlay
                     cropBox={cropBox}
-                    image={currentImage}
+                    image={workspaceImage}
                     onChange={setCropBox}
                     renderedBox={renderedBox}
                     zoom={zoom}
@@ -1094,6 +1178,7 @@ export function PhotoEditor() {
 
       <EditorTray
         cropNeedsAi={originalImage ? !isCropWithinImage(cropInOriginalSpace, originalImage) : false}
+        cropRotation={cropRotation}
         adjustmentValue={adjustmentValue}
         currentImage={currentImage}
         customPrompt={customPrompt}
@@ -1111,6 +1196,7 @@ export function PhotoEditor() {
         onSelectAction={selectAction}
         onSelectTool={selectTool}
         onSetAdjustmentValue={setAdjustmentValue}
+        onSetCropRotation={setCropRotation}
         onUseSuggestion={useSuggestion}
         operationVisible={operationVisible}
         railMode={railMode}
@@ -1134,6 +1220,7 @@ type CropOverlayProps = {
 };
 
 function CropOverlay({ cropBox, image, onChange, renderedBox, zoom = 1 }: CropOverlayProps) {
+  const needsAi = !isCropWithinImage(cropBox, image);
   const box = renderedBox ?? {
     width: image.width,
     height: image.height,
@@ -1200,7 +1287,11 @@ function CropOverlay({ cropBox, image, onChange, renderedBox, zoom = 1 }: CropOv
       style={{ width: box.width, height: box.height }}
     >
       <div
-        className="pointer-events-auto absolute border-2 border-emerald-300 bg-emerald-300/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]"
+        className={`pointer-events-auto absolute bg-emerald-300/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] ${
+          needsAi
+            ? "border-2 border-dashed border-amber-300"
+            : "border-2 border-emerald-300"
+        }`}
         data-testid="crop-box"
         onPointerDown={(event) => beginDrag("move", event)}
         style={{
@@ -1228,9 +1319,102 @@ function CropOverlay({ cropBox, image, onChange, renderedBox, zoom = 1 }: CropOv
   );
 }
 
+/**
+ * Horizontal scrub dial for rotation angle in degrees. Drag left/right to
+ * rotate; tick marks slide under a fixed center indicator. Snaps to 0° within
+ * a small dead-zone. Range is clamped to ±45° (use the Crop tool's apply step
+ * if you need a 90° re-orient — that's a separate flow we can add later).
+ */
+function RotationDial({ value, onChange }: { value: number; onChange: (deg: number) => void }) {
+  const PIXELS_PER_DEGREE = 4;
+  const MIN_DEG = -45;
+  const MAX_DEG = 45;
+  const VISIBLE_DEGREES = 45; // window: ±22.5° around current value
+  const VISIBLE_PX = VISIBLE_DEGREES * PIXELS_PER_DEGREE;
+  const startRef = useRef<{ x: number; angle: number } | null>(null);
+
+  function clamp(v: number) {
+    if (Math.abs(v) < 0.6) return 0; // snap to zero
+    return Math.max(MIN_DEG, Math.min(MAX_DEG, v));
+  }
+
+  function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    startRef.current = { x: event.clientX, angle: value };
+  }
+  function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (!startRef.current) return;
+    const dx = event.clientX - startRef.current.x;
+    onChange(clamp(startRef.current.angle - dx / PIXELS_PER_DEGREE));
+  }
+  function onPointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    startRef.current = null;
+  }
+
+  const ticks: React.ReactNode[] = [];
+  for (let i = MIN_DEG - 5; i <= MAX_DEG + 5; i++) {
+    const x = (i - value) * PIXELS_PER_DEGREE + VISIBLE_PX / 2;
+    if (x < -2 || x > VISIBLE_PX + 2) continue;
+    const isMajor = i % 10 === 0;
+    const isZero = i === 0;
+    ticks.push(
+      <div
+        aria-hidden
+        className="pointer-events-none absolute"
+        key={i}
+        style={{
+          left: x,
+          top: isMajor ? 4 : 9,
+          bottom: isMajor ? 4 : 9,
+          width: 1,
+          backgroundColor: isZero
+            ? "rgb(110, 231, 183)"
+            : isMajor
+              ? "rgba(255, 255, 255, 0.7)"
+              : "rgba(255, 255, 255, 0.3)",
+        }}
+      />,
+    );
+  }
+
+  return (
+    <div aria-label="Rotation" className="liquid-glass flex items-center gap-3 rounded-full px-3 py-2">
+      <div
+        aria-valuemax={MAX_DEG}
+        aria-valuemin={MIN_DEG}
+        aria-valuenow={Math.round(value)}
+        className="relative h-7 cursor-ew-resize select-none rounded-full bg-black/30"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        role="slider"
+        style={{ width: VISIBLE_PX, touchAction: "none" }}
+      >
+        {ticks}
+        {/* Fixed center indicator */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-0 bottom-0 -translate-x-1/2"
+          style={{ width: 2, backgroundColor: "rgb(52, 211, 153)" }}
+        />
+      </div>
+      <span className="w-10 text-center font-mono text-sm text-white/80">
+        {value > 0 ? "+" : ""}
+        {value.toFixed(value % 1 === 0 ? 0 : 1)}°
+      </span>
+    </div>
+  );
+}
+
 type EditorTrayProps = {
   adjustmentValue: number;
   cropNeedsAi: boolean;
+  cropRotation: number;
   currentImage: ImageAsset | null;
   customPrompt: string;
   job: GenerationJob;
@@ -1245,6 +1429,7 @@ type EditorTrayProps = {
   onSelectAction: (id: string) => void;
   onSelectTool: (id: ToolId) => void;
   onSetAdjustmentValue: (value: number) => void;
+  onSetCropRotation: (value: number) => void;
   onUseSuggestion: (suggestion: AISuggestion) => void;
   operationVisible: boolean;
   railMode: "tools" | "actions";
@@ -1302,6 +1487,7 @@ function EditorTray(props: EditorTrayProps) {
 
 function OperationArea({
   cropNeedsAi,
+  cropRotation,
   adjustmentValue,
   currentImage,
   customPrompt,
@@ -1313,6 +1499,7 @@ function OperationArea({
   onImport,
   onLocalParams,
   onSetAdjustmentValue,
+  onSetCropRotation,
   onUseSuggestion,
   selectedAction,
   selectedTool,
@@ -1383,13 +1570,20 @@ function OperationArea({
 
   if (selectedAction?.flow === "crop-or-outpaint") {
     return (
-      <button
-        className="spring-hover rounded-full bg-emerald-300 px-4 py-2 text-sm font-medium text-black shadow-[0_10px_40px_rgba(0,0,0,0.45)] hover:bg-emerald-200 disabled:opacity-35"
-        onClick={onApplyCrop}
-        type="button"
-      >
-        {cropNeedsAi ? "AI Expand" : "Crop"}
-      </button>
+      <div className="flex items-center gap-2">
+        <RotationDial onChange={onSetCropRotation} value={cropRotation} />
+        <button
+          className={`spring-hover rounded-full px-4 py-2 text-sm font-medium shadow-[0_10px_40px_rgba(0,0,0,0.45)] disabled:opacity-35 ${
+            cropNeedsAi
+              ? "bg-amber-300 text-black hover:bg-amber-200"
+              : "bg-emerald-300 text-black hover:bg-emerald-200"
+          }`}
+          onClick={onApplyCrop}
+          type="button"
+        >
+          {cropNeedsAi ? "AI Expand" : "Crop"}
+        </button>
+      </div>
     );
   }
 

@@ -106,6 +106,8 @@ export type EditOperation = {
   label: string;
   image: ImageAsset;
   sourceRect?: CropBox;
+  /** Rotation applied to the source image, in degrees, clockwise. */
+  rotation?: number;
   params?: AdjustmentParams;
   createdAt: string;
 };
