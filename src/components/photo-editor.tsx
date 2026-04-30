@@ -26,6 +26,7 @@ import {
   RotateCcw,
   RotateCw,
   Scan,
+  Settings,
   SlidersHorizontal,
   Smile,
   Sparkles,
@@ -46,6 +47,7 @@ import {
   downloadDataUrl,
   fileToImageAsset,
 } from "@/lib/browser-image";
+import { AISettingsDialog } from "@/components/ai-settings-dialog";
 import {
   cropToRenderedRect,
   normalizeRenderedRect,
@@ -261,6 +263,7 @@ export function PhotoEditor() {
   // Rotation (degrees, clockwise) applied to the originalImage while the crop
   // tool is active. Reset on tool/action change and on apply.
   const [cropRotation, setCropRotation] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -1128,6 +1131,14 @@ export function PhotoEditor() {
           ) : null}
           <button
             className="liquid-glass grid size-10 place-items-center rounded-full"
+            onClick={() => setSettingsOpen(true)}
+            title="AI provider settings"
+            type="button"
+          >
+            <Settings size={18} />
+          </button>
+          <button
+            className="liquid-glass grid size-10 place-items-center rounded-full"
             disabled={historyIndex <= 0}
             onClick={undo}
             title="Undo"
@@ -1188,6 +1199,8 @@ export function PhotoEditor() {
         }}
         type="file"
       />
+
+      <AISettingsDialog onClose={() => setSettingsOpen(false)} open={settingsOpen} />
 
       <EditorTray
         cropNeedsAi={originalImage ? !isCropWithinImage(cropInOriginalSpace, originalImage) : false}
