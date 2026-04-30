@@ -1,4 +1,6 @@
 import { mockGeneratedImage, mockOutpaintImage, mockParams, mockSuggestions } from "@/lib/ai/mock-provider";
+import { getPromptTemplate } from "@/lib/prompts";
+import { editorTools } from "@/lib/tools";
 import type {
   AdjustmentParams,
   AISettings,
@@ -8,6 +10,21 @@ import type {
   SuggestionTarget,
   ToolId,
 } from "@/lib/types";
+
+/**
+ * Look up the prompt template body for a given (toolId, actionId), if one is
+ * configured in the tool catalog. Used to inject the rich creative direction
+ * into the system/user prompt for AI suggestion calls — without this the model
+ * only sees "Tool: color, Action: filter" and returns generic suggestions.
+ */
+function templateBodyForAction(toolId: ToolId, actionId: string | undefined): string | undefined {
+  const tool = editorTools.find((t) => t.id === toolId);
+  if (!tool) return undefined;
+  const action = tool.actions.find((a) => a.id === actionId);
+  const id = action?.promptTemplateId;
+  if (!id) return undefined;
+  return getPromptTemplate(id)?.template;
+}
 
 type BasePayload = {
   image?: string;
@@ -254,15 +271,23 @@ async function callOpenAICompatibleJson<T>(
     throw new Error("AI_BASE_URL, AI_API_KEY, and AI_VISION_MODEL are required");
   }
 
+  const templateBody =
+    operation === "suggestions" ? templateBodyForAction(payload.toolId, payload.actionId) : undefined;
+
   const userText =
     operation === "suggestions"
       ? [
           `Tool: ${payload.toolId}`,
           `Action: ${payload.actionId ?? "default"}`,
+          templateBody ? `\nCreative direction:\n${templateBody}\n` : "",
           "Return exactly 5 concise photo editing suggestions.",
+          "Each `label` is a short Chinese-or-English headline (≤24 chars).",
+          "Each `prompt` is a fully-formed instruction for an image-generation model — specific colors, contrast, grain, references — never a single adjective.",
           "Return minified JSON only, with no markdown and no trailing commentary.",
           "JSON shape: {\"suggestions\":[{\"id\":\"short-id\",\"label\":\"Short label\",\"prompt\":\"actionable edit prompt\",\"description\":\"optional short description\"}]}",
-        ].join("\n")
+        ]
+          .filter(Boolean)
+          .join("\n")
       : [
           `Tool: ${payload.toolId}`,
           `Action: ${payload.actionId ?? "default"}`,
@@ -298,7 +323,9 @@ async function callOpenAICompatibleJson<T>(
     body: JSON.stringify({
       model,
       messages,
-      temperature: 0.4,
+      // Suggestions need higher creativity to surface diverse film/photographer
+      // references; param mapping wants determinism.
+      temperature: operation === "suggestions" ? 0.85 : 0.3,
       max_tokens: 4096,
       response_format: { type: "json_object" },
     }),
@@ -329,12 +356,29 @@ async function callOpenAICompatibleBatchSuggestions(payload: BatchSuggestionsPay
     throw new Error("AI_BASE_URL, AI_API_KEY, and AI_VISION_MODEL are required");
   }
 
+  // Annotate each target with its template's creative direction so the model
+  // knows what kind of suggestions each toolId/actionId expects (e.g. for
+  // color/filter we want film stocks + cinematic looks; for style we want
+  // photographer / movie / era references). Targets without a template fall
+  // back to a generic line.
+  const targetSections = payload.targets.map((target, index) => {
+    const body = templateBodyForAction(target.toolId, target.actionId);
+    const header = `Target ${index + 1} — toolId:${target.toolId} actionId:${target.actionId} (${target.label})`;
+    if (!body) return `${header}\n(generic — return useful editing suggestions for this category)`;
+    return `${header}\n${body}`;
+  });
+
   const userText = [
-    "Return grouped photo editing suggestions for every target.",
+    "Return grouped photo editing suggestions for every target listed below.",
     "Each group must keep the same toolId and actionId.",
-    "Return exactly 5 concise suggestions per target.",
+    "Return exactly 5 suggestions per target.",
+    "Each `label` is a short headline (≤24 chars).",
+    "Each `prompt` is a fully-formed instruction for an image-generation model — specific colors, contrast, grain, references — never a single adjective.",
+    "Different targets cover different creative buckets — read each target's instructions carefully and DO NOT reuse the same suggestions across targets.",
     "Return minified JSON only, with no markdown and no trailing commentary.",
-    `Targets: ${JSON.stringify(payload.targets)}`,
+    "",
+    targetSections.join("\n\n"),
+    "",
     "JSON shape: {\"groups\":[{\"toolId\":\"style\",\"actionId\":\"default\",\"suggestions\":[{\"id\":\"short-id\",\"label\":\"Short label\",\"prompt\":\"actionable edit prompt\",\"description\":\"optional short description\"}]}]}",
   ].join("\n");
 
@@ -364,7 +408,9 @@ async function callOpenAICompatibleBatchSuggestions(payload: BatchSuggestionsPay
     body: JSON.stringify({
       model,
       messages,
-      temperature: 0.4,
+      // Higher temperature so we get diverse film/photographer/era references
+      // instead of safe-bet "warm and contrasty" suggestions.
+      temperature: 0.85,
       max_tokens: 12000,
       response_format: { type: "json_object" },
     }),
