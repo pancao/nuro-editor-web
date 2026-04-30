@@ -261,6 +261,12 @@ export function PhotoEditor() {
   const [hasPeople, setHasPeople] = useState<boolean | null>(null);
   const [mockNotice, setMockNotice] = useState<{ url: string; reason: string; ts: number } | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const panSessionRef = useRef<{
+    pointerId: number;
+    startPan: { x: number; y: number };
+    startX: number;
+    startY: number;
+  } | null>(null);
 
   // Dev-only popup: listen for fallback events emitted from postJson.
   useEffect(() => {
@@ -428,24 +434,66 @@ export function PhotoEditor() {
 
   function onStagePointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (!currentImage) return;
+    if (!event.isPrimary || event.button !== 0) return;
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      if (target.closest("[data-editor-ui]")) return;
+      const tagName = target.tagName;
+      if (
+        tagName === "BUTTON" ||
+        tagName === "A" ||
+        tagName === "INPUT" ||
+        tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+    }
     event.preventDefault();
+    panSessionRef.current = {
+      pointerId: event.pointerId,
+      startPan: { ...pan },
+      startX: event.clientX,
+      startY: event.clientY,
+    };
     setIsPanning(true);
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startPan = { ...pan };
-    function move(pointerEvent: PointerEvent) {
-      setPan({
-        x: startPan.x + (pointerEvent.clientX - startX),
-        y: startPan.y + (pointerEvent.clientY - startY),
-      });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    window.addEventListener("blur", endStagePanOnBlur);
+  }
+
+  function onStagePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const session = panSessionRef.current;
+    if (!session || event.pointerId !== session.pointerId) return;
+    if (event.buttons === 0) {
+      endStagePan(event.currentTarget);
+      return;
     }
-    function up() {
-      setIsPanning(false);
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+    event.preventDefault();
+    setPan({
+      x: session.startPan.x + (event.clientX - session.startX),
+      y: session.startPan.y + (event.clientY - session.startY),
+    });
+  }
+
+  function onStagePointerEnd(event: React.PointerEvent<HTMLDivElement>) {
+    const session = panSessionRef.current;
+    if (!session || event.pointerId === session.pointerId) {
+      endStagePan(event.currentTarget);
     }
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+  }
+
+  function endStagePanOnBlur() {
+    endStagePan(stageRef.current);
+  }
+
+  function endStagePan(element: HTMLDivElement | null) {
+    const session = panSessionRef.current;
+    panSessionRef.current = null;
+    setIsPanning(false);
+    window.removeEventListener("blur", endStagePanOnBlur);
+    if (session && element?.hasPointerCapture(session.pointerId)) {
+      element.releasePointerCapture(session.pointerId);
+    }
   }
 
   const minimapViewport = useMemo(() => {
@@ -871,7 +919,7 @@ export function PhotoEditor() {
 
       {/* Dev-only fallback notice: shown when an AI request returned mock/backup data. */}
       {mockNotice ? (
-        <div className="pointer-events-auto fixed left-1/2 top-20 z-50 -translate-x-1/2 max-w-[min(90vw,640px)] rounded-xl border border-amber-300/60 bg-amber-400/95 px-4 py-3 text-sm text-black shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
+        <div data-editor-ui className="pointer-events-auto fixed left-1/2 top-20 z-50 -translate-x-1/2 max-w-[min(90vw,640px)] rounded-xl border border-amber-300/60 bg-amber-400/95 px-4 py-3 text-sm text-black shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
           <div className="flex items-start gap-3">
             <span className="text-base leading-none">⚠️</span>
             <div className="flex-1">
@@ -895,10 +943,14 @@ export function PhotoEditor() {
 
       <div
         ref={stageRef}
-        className="absolute inset-0 overflow-hidden"
+        className="absolute inset-0 z-10 overflow-hidden"
+        onLostPointerCapture={onStagePointerEnd}
         onPointerDown={onStagePointerDown}
+        onPointerCancel={onStagePointerEnd}
+        onPointerMove={onStagePointerMove}
+        onPointerUp={onStagePointerEnd}
         style={{
-          cursor: currentImage ? (isPanning ? "grabbing" : "grab") : "default",
+          cursor: isPanning ? "grabbing" : "default",
           touchAction: currentImage ? "none" : "auto",
         }}
       >
@@ -955,7 +1007,7 @@ export function PhotoEditor() {
         )}
       </div>
 
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-2 px-4 pt-3 md:px-6 md:pt-4">
+      <header data-editor-ui className="pointer-events-auto absolute inset-x-0 top-0 z-50 flex items-start justify-between gap-2 px-4 pt-3 md:px-6 md:pt-4">
         <div className="liquid-glass pointer-events-auto rounded-2xl px-3 py-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.svg" alt="Nuro Editor" className="h-7 w-auto" draggable={false} />
@@ -1143,7 +1195,7 @@ function CropOverlay({ cropBox, image, onChange, renderedBox, zoom = 1 }: CropOv
 
   return (
     <div
-      className="pointer-events-none absolute left-0 top-0"
+      className="absolute left-0 top-0"
       data-testid="crop-overlay"
       style={{ width: box.width, height: box.height }}
     >
@@ -1208,11 +1260,11 @@ function EditorTray(props: EditorTrayProps) {
   const selectedTool = props.tools.find((tool) => tool.id === props.selectedToolId) ?? props.tools[0];
 
   return (
-    <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-30 px-3 pb-4 pt-3 md:px-6">
+    <footer data-editor-ui className="pointer-events-auto absolute inset-x-0 bottom-0 z-50 px-3 pb-4 pt-3 md:px-6">
       <div className="pointer-events-auto mx-auto flex max-w-6xl flex-col gap-3">
         {props.operationVisible ? (
-          <div className="relative z-10 px-1">
-            <div className="flex justify-center">
+          <div className="pointer-events-none relative z-10 px-1">
+            <div className="pointer-events-none flex justify-center">
               <div className="pointer-events-none -my-12 max-w-full overflow-x-auto px-14 py-14">
                 <div className="pointer-events-auto flex w-max max-w-none flex-col items-center gap-2">
                   <OperationArea selectedTool={selectedTool} {...props} />
@@ -1420,7 +1472,7 @@ function ToolRail({
   tools: typeof enabledTools;
 }) {
   return (
-    <nav aria-label="Editor tools" className="pointer-events-none -my-12 flex justify-center overflow-x-auto px-12 py-12">
+    <nav aria-label="Editor tools" className="pointer-events-auto -my-12 flex justify-center overflow-x-auto px-12 py-12">
       <div className="pointer-events-auto flex w-max min-w-full justify-center gap-1.5">
       {tools.map((tool, index) => {
         const Icon = iconMap[tool.icon as keyof typeof iconMap] ?? Circle;
@@ -1463,7 +1515,7 @@ function ActionRail({
   selectedActionId: string;
 }) {
   return (
-    <nav aria-label="Subtools" className="pointer-events-none -my-12 flex items-center justify-center overflow-x-auto px-12 py-12">
+    <nav aria-label="Subtools" className="pointer-events-auto -my-12 flex items-center justify-center overflow-x-auto px-12 py-12">
       <div className="pointer-events-auto flex w-max min-w-full items-end justify-center gap-1.5">
       <button
         aria-label="Close"
@@ -1558,7 +1610,8 @@ function HistoryStack({
   return (
     <div
       ref={containerRef}
-      className="pointer-events-auto absolute bottom-32 left-4 z-30 md:bottom-36 md:left-6"
+      data-editor-ui
+      className="pointer-events-auto absolute bottom-32 left-4 z-50 md:bottom-36 md:left-6"
     >
       <div className="relative" style={{ width: itemSize, height: itemSize }}>
         {!isOpen
@@ -1710,7 +1763,7 @@ function ZoomNavigator({
   }
 
   return (
-    <div className="pointer-events-auto absolute bottom-32 right-4 z-30 flex flex-col items-end gap-1.5 md:bottom-36 md:right-6">
+    <div data-editor-ui className="pointer-events-auto absolute bottom-32 right-4 z-50 flex flex-col items-end gap-1.5 md:bottom-36 md:right-6">
       {zoom > 1 ? (
         <div className="liquid-glass-static overflow-hidden rounded-lg p-1">
           <div

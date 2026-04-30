@@ -150,14 +150,9 @@ button.liquid-glass:disabled {
 
 @media (prefers-reduced-motion: reduce) {
   .liquid-glass {
-    transition: none;
-  }
-  button.liquid-glass:hover:not(:disabled),
-  a.liquid-glass:hover,
-  button:hover:not(:disabled) > .liquid-glass,
-  a:hover > .liquid-glass {
-    transform: none;
-    filter: none;
+    transition:
+      transform 160ms ease-out,
+      filter 160ms ease-out;
   }
 }
 
@@ -180,10 +175,11 @@ button.liquid-glass:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spring-hover,
-  .spring-hover:hover:not(:disabled) {
-    transform: none;
-    transition: none;
+  .spring-hover {
+    transition:
+      transform 160ms ease-out,
+      background-color 160ms ease-out,
+      filter 160ms ease-out;
   }
 }
 
@@ -208,10 +204,9 @@ button.liquid-glass:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rail-button > :first-child,
-  .rail-button:hover:not(:disabled) > :first-child {
-    transform: none;
-    filter: none;
-    transition: none;
+  .rail-button > :first-child {
+    transition:
+      transform 160ms ease-out,
+      filter 160ms ease-out;
   }
 }
