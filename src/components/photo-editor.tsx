@@ -1091,6 +1091,19 @@ export function PhotoEditor() {
         )}
       </div>
 
+      {/* Centered "Alpha" badge — purely informational, sits above the header
+          but behind any modals. Uses absolute positioning so it stays visually
+          centered regardless of the header's flex layout. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 md:top-4"
+      >
+        <span className="liquid-glass inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200">
+          <span className="size-1.5 rounded-full bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.8)]" />
+          Alpha
+        </span>
+      </div>
+
       <header data-editor-ui className="pointer-events-auto absolute inset-x-0 top-0 z-50 flex items-start justify-between gap-2 px-4 pt-3 md:px-6 md:pt-4">
         <div className="liquid-glass pointer-events-auto rounded-2xl px-3 py-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}

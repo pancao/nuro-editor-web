@@ -49,14 +49,31 @@ function cleanSetting(value: string | undefined) {
   return trimmed ? trimmed : undefined;
 }
 
+/**
+ * Read an env var with a prod override. When NODE_ENV === "production",
+ * `AI_PROD_<NAME>` (if set) wins; otherwise the standard `AI_<NAME>` is used.
+ * This lets the same codebase ship with one provider for dev/staging and a
+ * different (rate-limited / production-funded) provider in prod, without the
+ * user needing to swap browser settings.
+ */
+function envWithProdOverride(name: "PROVIDER" | "API_KEY" | "BASE_URL" | "VISION_MODEL" | "IMAGE_MODEL") {
+  const standard = `AI_${name}`;
+  const prod = `AI_PROD_${name}`;
+  if (process.env.NODE_ENV === "production") {
+    const prodValue = cleanSetting(process.env[prod]);
+    if (prodValue) return prodValue;
+  }
+  return cleanSetting(process.env[standard]);
+}
+
 export function resolveAIProviderConfig(payload: { aiSettings?: AISettings }) {
   const settings = payload.aiSettings;
   return {
-    provider: cleanSetting(settings?.provider) ?? process.env.AI_PROVIDER,
-    apiKey: cleanSetting(settings?.apiKey) ?? process.env.AI_API_KEY,
-    baseUrl: cleanSetting(settings?.baseUrl) ?? process.env.AI_BASE_URL,
-    visionModel: cleanSetting(settings?.visionModel) ?? process.env.AI_VISION_MODEL,
-    imageModel: cleanSetting(settings?.imageModel) ?? process.env.AI_IMAGE_MODEL,
+    provider: cleanSetting(settings?.provider) ?? envWithProdOverride("PROVIDER"),
+    apiKey: cleanSetting(settings?.apiKey) ?? envWithProdOverride("API_KEY"),
+    baseUrl: cleanSetting(settings?.baseUrl) ?? envWithProdOverride("BASE_URL"),
+    visionModel: cleanSetting(settings?.visionModel) ?? envWithProdOverride("VISION_MODEL"),
+    imageModel: cleanSetting(settings?.imageModel) ?? envWithProdOverride("IMAGE_MODEL"),
   };
 }
 

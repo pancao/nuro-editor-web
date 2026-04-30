@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PhotoEditor } from "@/components/photo-editor";
 import type { ImageAsset } from "@/lib/types";
 
-const loadEditorSessionMock = vi.hoisted(() => vi.fn(async () => null));
+// Typed as a permissive Promise so individual tests can mockResolvedValue with
+// either null or a full session object without TS narrowing the return type.
+const loadEditorSessionMock = vi.hoisted(() =>
+  vi.fn<() => Promise<unknown>>(async () => null),
+);
 
 vi.mock("@/lib/editor-storage", () => ({
   loadEditorSession: loadEditorSessionMock,
